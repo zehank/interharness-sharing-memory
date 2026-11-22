@@ -1,0 +1,7 @@
+*.db
+*.db-wal
+*.db-shm
+*.tmp
+.DS_Store
+Thumbs.db
+node_modules/

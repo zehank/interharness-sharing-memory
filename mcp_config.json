@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "local-memory-mcp": {
+      "command": "node",
+      "args": [
+        "--no-warnings",
+        "./server/memory-mcp.mjs"
+      ]
+    }
+  }
+}
