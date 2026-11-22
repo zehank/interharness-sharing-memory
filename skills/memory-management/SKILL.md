@@ -22,7 +22,8 @@ Use this skill when the user wants to inspect, organize, link, deduplicate, arch
 - `memory_archive`: Archive/restore a memory or auto-archive stale low-importance memories (`stale_days`).
 - `memory_delete`: Soft-delete a memory (tombstone propagates across synced devices).
 - `memory_sync`: Merge all device snapshots and run Git pull/commit/push if `syncDir` is a Git repo.
-- `memory_stats`: Show counts, device ID, sync mode, and paths.
+- `memory_update`: Check for or apply plugin updates from GitHub (`git pull --ff-only`, skips if local edits exist).
+- `memory_stats`: Show counts, device ID, sync mode, update status, and paths.
 
 ## Cross-Platform & Win/Mac Sync Setup
 1. **Install on macOS**: Copy the `local-memory` plugin directory to `~/.gemini/config/plugins/local-memory/` (requires Node.js >= 22.5, e.g. Node 24). `mcp_config.json` uses a relative path (`./server/memory-mcp.mjs`), so zero path edits are needed.

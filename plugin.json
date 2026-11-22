@@ -2,7 +2,7 @@
   "name": "local-memory",
   "displayName": "Local Memory",
   "description": "Cross-platform (Windows & macOS) persistent memory plugin for Antigravity with layered recall, knowledge-graph links, decay/reinforcement, automatic MEMORY.md mirroring, and conflict-free multi-device sync.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": {
     "name": "zehank",
     "url": "https://github.com/zehank"

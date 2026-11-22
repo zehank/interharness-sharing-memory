@@ -13,16 +13,22 @@
  */
 
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PLUGIN_ROOT = path.resolve(__dirname, "..");
 
 const DATA_DIR =
   process.env.MEMORY_DATA_DIR || path.join(os.homedir(), ".gemini", "memory");
 const CONFIG_PATH = path.join(DATA_DIR, "config.json");
+const UPDATE_STATE_PATH = path.join(DATA_DIR, "update_state.json");
 
 function loadUserConfig() {
   try {
@@ -610,10 +616,239 @@ function findSimilarMemories(title, content, excludeUid = null, limit = 3) {
     }));
 }
 
-// Startup: migrate, merge any remote device snapshots, ensure MEMORY.md exists
+const AUTO_UPDATE_MODE =
+  process.env.MEMORY_AUTO_UPDATE || userConfig.autoUpdate || "apply"; // "apply" | "check" | "off"
+const AUTO_UPDATE_INTERVAL_HOURS =
+  Number(userConfig.autoUpdateIntervalHours) || 12;
+
+function readPluginVersion() {
+  try {
+    const raw = fs
+      .readFileSync(path.join(PLUGIN_ROOT, "plugin.json"), "utf8")
+      .replace(/^\uFEFF/, "");
+    return JSON.parse(raw).version || "2.1.0";
+  } catch {
+    return "2.1.0";
+  }
+}
+
+function readUpdateState() {
+  try {
+    if (fs.existsSync(UPDATE_STATE_PATH)) {
+      const raw = fs
+        .readFileSync(UPDATE_STATE_PATH, "utf8")
+        .replace(/^\uFEFF/, "");
+      return JSON.parse(raw);
+    }
+  } catch {
+    // ignore corrupt state
+  }
+  return null;
+}
+
+function saveUpdateState(state) {
+  try {
+    writeAtomic(UPDATE_STATE_PATH, JSON.stringify(state, null, 2));
+  } catch {
+    // ignore
+  }
+}
+
+function runPluginUpdate({ checkOnly = false } = {}) {
+  const versionBefore = readPluginVersion();
+  const baseState = {
+    last_checked_at: nowIso(),
+    plugin_root: PLUGIN_ROOT,
+    auto_update_mode: AUTO_UPDATE_MODE,
+    current_version: versionBefore,
+  };
+
+  if (!isGitRepo(PLUGIN_ROOT)) {
+    const res = {
+      ...baseState,
+      status: "not_git_repo",
+      message:
+        "Plugin directory is not a Git repository. Clone from GitHub to enable auto-update.",
+    };
+    saveUpdateState(res);
+    return res;
+  }
+
+  const git = (args) =>
+    execFileSync("git", args, {
+      cwd: PLUGIN_ROOT,
+      encoding: "utf8",
+      timeout: 15000,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+
+  try {
+    git(["fetch", "--quiet", "origin"]);
+    const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]) || "main";
+    let upstream = `origin/${branch}`;
+    try {
+      upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+    } catch {
+      // fallback to origin/<branch>
+    }
+
+    const localSha = git(["rev-parse", "--short", "HEAD"]);
+    const remoteSha = git(["rev-parse", "--short", upstream]);
+    const behindCount = Number(git(["rev-list", "--count", `HEAD..${upstream}`])) || 0;
+    const changes =
+      behindCount > 0
+        ? git(["log", `HEAD..${upstream}`, "--oneline", "-n", "10"])
+            .split(/\r?\n/)
+            .filter(Boolean)
+        : [];
+
+    if (behindCount === 0) {
+      const res = {
+        ...baseState,
+        status: "up_to_date",
+        local_commit: localSha,
+        remote_commit: remoteSha,
+        behind_count: 0,
+        message: "Plugin is already up to date.",
+      };
+      saveUpdateState(res);
+      return res;
+    }
+
+    if (checkOnly) {
+      const res = {
+        ...baseState,
+        status: "update_available",
+        local_commit: localSha,
+        remote_commit: remoteSha,
+        behind_count: behindCount,
+        pending_commits: changes,
+        message: `${behindCount} new commit(s) available on ${upstream}. Call memory_update to apply.`,
+      };
+      saveUpdateState(res);
+      return res;
+    }
+
+    const dirty = git(["status", "--porcelain"]);
+    if (dirty) {
+      const res = {
+        ...baseState,
+        status: "skipped_dirty",
+        local_commit: localSha,
+        remote_commit: remoteSha,
+        behind_count: behindCount,
+        pending_commits: changes,
+        message:
+          "Update available, but skipped because plugin directory has local uncommitted modifications.",
+      };
+      saveUpdateState(res);
+      return res;
+    }
+
+    git(["pull", "--ff-only", "--quiet"]);
+    const versionAfter = readPluginVersion();
+    const newSha = git(["rev-parse", "--short", "HEAD"]);
+    const res = {
+      ...baseState,
+      status: "updated",
+      previous_version: versionBefore,
+      current_version: versionAfter,
+      previous_commit: localSha,
+      local_commit: newSha,
+      remote_commit: remoteSha,
+      behind_count: 0,
+      applied_commits: changes,
+      restart_required: true,
+      message: `Updated plugin ${versionBefore} (${localSha}) -> ${versionAfter} (${newSha}). New server code takes effect on next MCP reload/session.`,
+    };
+    saveUpdateState(res);
+    return res;
+  } catch (err) {
+    const res = {
+      ...baseState,
+      status: "error",
+      message: err.stderr?.toString()?.trim() || err.message,
+    };
+    saveUpdateState(res);
+    return res;
+  }
+}
+
+function scheduleBackgroundAutoUpdate() {
+  if (AUTO_UPDATE_MODE === "off" || !isGitRepo(PLUGIN_ROOT)) return;
+  const prev = readUpdateState();
+  if (prev?.last_checked_at) {
+    const elapsedHours =
+      (Date.now() - Date.parse(prev.last_checked_at)) / (1000 * 60 * 60);
+    if (elapsedHours < AUTO_UPDATE_INTERVAL_HOURS) return;
+  }
+
+  // Run non-blocking git fetch in background so MCP startup stays instant
+  const runAsyncGit = (args, cb) =>
+    execFile(
+      "git",
+      args,
+      { cwd: PLUGIN_ROOT, timeout: 10000, windowsHide: true },
+      (err, stdout, stderr) => cb(err, (stdout || "").trim(), (stderr || "").trim())
+    );
+
+  runAsyncGit(["fetch", "--quiet", "origin"], (fetchErr) => {
+    if (fetchErr) return;
+    runAsyncGit(["rev-list", "--count", "HEAD..@{u}"], (cntErr, cntOut) => {
+      if (cntErr) return;
+      const behind = Number(cntOut) || 0;
+      if (behind === 0) {
+        saveUpdateState({
+          last_checked_at: nowIso(),
+          plugin_root: PLUGIN_ROOT,
+          auto_update_mode: AUTO_UPDATE_MODE,
+          current_version: readPluginVersion(),
+          behind_count: 0,
+          status: "up_to_date",
+        });
+        return;
+      }
+      if (AUTO_UPDATE_MODE === "check") {
+        saveUpdateState({
+          last_checked_at: nowIso(),
+          plugin_root: PLUGIN_ROOT,
+          auto_update_mode: AUTO_UPDATE_MODE,
+          current_version: readPluginVersion(),
+          behind_count: behind,
+          status: "update_available",
+          message: `${behind} new commit(s) available. Call memory_update to apply.`,
+        });
+        return;
+      }
+      runAsyncGit(["status", "--porcelain"], (stErr, dirty) => {
+        if (stErr || dirty) return;
+        const versionBefore = readPluginVersion();
+        runAsyncGit(["pull", "--ff-only", "--quiet"], (pullErr) => {
+          if (pullErr) return;
+          const versionAfter = readPluginVersion();
+          saveUpdateState({
+            last_checked_at: nowIso(),
+            plugin_root: PLUGIN_ROOT,
+            auto_update_mode: AUTO_UPDATE_MODE,
+            previous_version: versionBefore,
+            current_version: versionAfter,
+            behind_count: 0,
+            status: "updated",
+            restart_required: true,
+            message: `Auto-updated plugin ${versionBefore} -> ${versionAfter}. Takes effect on next MCP reload/session.`,
+          });
+        });
+      });
+    });
+  });
+}
+
+// Startup: migrate, merge any remote device snapshots, ensure MEMORY.md exists, check updates in background
 migrateSchema();
 mergeAllDeviceSnapshots();
 syncMarkdown();
+scheduleBackgroundAutoUpdate();
 
 const TOOLS = [
   {
@@ -801,9 +1036,23 @@ const TOOLS = [
     },
   },
   {
+    name: "memory_update",
+    description:
+      "Check for or apply plugin updates from GitHub (fast-forward git pull in the plugin directory). Safe: skips automatically if local uncommitted changes exist.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        check_only: {
+          type: "boolean",
+          description: "If true, only check whether updates are available without pulling (default false).",
+        },
+      },
+    },
+  },
+  {
     name: "memory_stats",
     description:
-      "Return memory statistics (active, pinned, archived, links), current device_id, sync mode, and file paths.",
+      "Return memory statistics (active, pinned, archived, links), current device_id, sync mode, update status, and file paths.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -844,22 +1093,29 @@ function handleToolCall(name, args = {}) {
       }
       const recent = others.slice(0, recentLimit);
 
+      const updateState = readUpdateState();
+      const briefPayload = {
+        device_id: DEVICE_ID,
+        total_active: active.length,
+        pinned_count: pinned.length,
+        pinned,
+        recent_highlights: recent,
+        markdown_path: MD_PATH,
+      };
+      if (
+        updateState &&
+        (updateState.status === "updated" || updateState.status === "update_available")
+      ) {
+        briefPayload.plugin_update = {
+          status: updateState.status,
+          message: updateState.message,
+        };
+      }
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                device_id: DEVICE_ID,
-                total_active: active.length,
-                pinned_count: pinned.length,
-                pinned,
-                recent_highlights: recent,
-                markdown_path: MD_PATH,
-              },
-              null,
-              2
-            ),
+            text: JSON.stringify(briefPayload, null, 2),
           },
         ],
       };
@@ -1357,6 +1613,13 @@ function handleToolCall(name, args = {}) {
       };
     }
 
+    case "memory_update": {
+      const res = runPluginUpdate({ checkOnly: Boolean(args.check_only) });
+      return {
+        content: [{ type: "text", text: JSON.stringify(res, null, 2) }],
+      };
+    }
+
     case "memory_stats": {
       const active = db
         .prepare("SELECT COUNT(*) as c FROM memories WHERE deleted_at IS NULL AND archived = 0")
@@ -1384,7 +1647,7 @@ function handleToolCall(name, args = {}) {
             type: "text",
             text: JSON.stringify(
               {
-                version: "2.0.0",
+                version: readPluginVersion(),
                 device_id: DEVICE_ID,
                 active,
                 pinned,
@@ -1394,6 +1657,8 @@ function handleToolCall(name, args = {}) {
                 sync_mode: isGitRepo(SYNC_DIR) ? "git" : "folder",
                 sync_dir: SYNC_DIR,
                 synced_devices: deviceFiles.map((f) => f.replace(/\.json$/, "")),
+                auto_update_mode: AUTO_UPDATE_MODE,
+                update_state: readUpdateState(),
                 db_path: DB_PATH,
                 markdown_path: MD_PATH,
               },
@@ -1446,7 +1711,7 @@ rl.on("line", (line) => {
           result: {
             protocolVersion: params?.protocolVersion || "2024-11-05",
             capabilities: { tools: {} },
-            serverInfo: { name: "local-memory", version: "2.0.0" },
+            serverInfo: { name: "local-memory", version: readPluginVersion() },
           },
         });
         break;

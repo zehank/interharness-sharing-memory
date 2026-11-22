@@ -10,6 +10,7 @@ A zero-dependency, cross-platform (**Windows & macOS**) persistent memory plugin
 - **Deduplication & Evolution**: `memory_save` returns `similar_candidates` and supports `supersedes` to archive outdated decisions cleanly.
 - **Human-Readable Mirror**: Automatically regenerates `~/.gemini/memory/MEMORY.md` on every write/sync.
 - **Conflict-Free Multi-Device Sync (Win ↔ Mac)**: Local SQLite stays local; each machine writes only `sync/devices/<device-id>.json` and merges others via Last-Write-Wins (`uid` + `updated_at` + soft-delete tombstones). Works with **Private Git Repo** or **Cloud Folders** (OneDrive / iCloud / Dropbox / Syncthing).
+- **Safe Auto-Update**: Automatically checks and fast-forward pulls updates from GitHub in the background (every 12 hours, non-blocking, skips if local modifications exist), plus an on-demand `memory_update` tool.
 
 ---
 
@@ -79,7 +80,18 @@ Each machine only writes its own `devices/<device-id>.json`, avoiding cloud conf
 | `memory_archive` | Archive/restore a memory or auto-archive stale low-importance memories |
 | `memory_delete` | Soft-delete a memory (propagates across synced devices via tombstone) |
 | `memory_sync` | Merge device snapshots and run Git pull/commit/push if `syncDir` is a Git repo |
-| `memory_stats` | View counts, device ID, sync mode, and file paths |
+| `memory_update` | Check for or apply plugin updates from GitHub (`git pull --ff-only`) |
+| `memory_stats` | View counts, device ID, sync mode, update status, and file paths |
+
+### Auto-Update Configuration (Optional)
+By default, the plugin checks GitHub in the background every 12 hours and safely fast-forward updates itself when cloned via Git. You can customize this in `~/.gemini/memory/config.json`:
+```json
+{
+  "autoUpdate": "apply",
+  "autoUpdateIntervalHours": 12
+}
+```
+Supported values for `autoUpdate`: `"apply"` (default, auto pull if clean), `"check"` (notify only), or `"off"`.
 
 ---
 

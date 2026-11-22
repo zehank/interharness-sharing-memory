@@ -1,6 +1,6 @@
 # Local Memory Policy v2 (Semi-Automatic, Layered & Graph-Aware)
 
-You have access to a cross-platform persistent local memory system via `local-memory-mcp` (`memory_brief`, `memory_save`, `memory_search`, `memory_link`, `memory_list`, `memory_archive`, `memory_delete`, `memory_sync`, `memory_stats`). Memories are stored locally in SQLite (`~/.gemini/memory/memory.db`), mirrored to `~/.gemini/memory/MEMORY.md`, and synced across Windows/macOS via per-device JSON snapshots (`~/.gemini/memory/sync/devices/`).
+You have access to a cross-platform persistent local memory system via `local-memory-mcp` (`memory_brief`, `memory_save`, `memory_search`, `memory_link`, `memory_list`, `memory_archive`, `memory_delete`, `memory_sync`, `memory_update`, `memory_stats`). Memories are stored locally in SQLite (`~/.gemini/memory/memory.db`), mirrored to `~/.gemini/memory/MEMORY.md`, and synced across Windows/macOS via per-device JSON snapshots (`~/.gemini/memory/sync/devices/`).
 
 ## When to Recall Memories
 - At the start of a new conversation involving ongoing projects, preferences, tools, or workflows, call `memory_brief` first for a lightweight snapshot of pinned hot memories and recent highlights.
