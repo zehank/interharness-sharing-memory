@@ -2,7 +2,7 @@
 """Add a Codex Stop hook to the existing Local Memory MCP installation."""
 
 import argparse
-import fcntl
+import errno
 import hashlib
 import json
 import os
@@ -13,7 +13,15 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
+
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 APP_CODEX = Path("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex")
@@ -36,17 +44,26 @@ SECRET = re.compile(
 
 def run(command, *, cwd, timeout, data=None, env=None):
     with subprocess.Popen(
-        command, cwd=cwd, env=env, text=True, start_new_session=True,
+        command, cwd=cwd, env=env, encoding="utf-8", errors="replace",
+        start_new_session=os.name != "nt",
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     ) as process:
         try:
             output, _ = process.communicate(data, timeout=timeout)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.communicate()
+            if os.name == "nt":
+                try:
+                    subprocess.run(["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   timeout=5, check=True)
+                except (OSError, subprocess.SubprocessError):
+                    process.kill()
+            else:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.communicate(timeout=5)
             raise
         if process.returncode:
             raise subprocess.CalledProcessError(process.returncode, command)
@@ -54,7 +71,10 @@ def run(command, *, cwd, timeout, data=None, env=None):
 
 
 def summarize(answer):
-    codex = shutil.which("codex") or str(APP_CODEX)
+    if os.name == "nt":
+        codex = shutil.which("codex.exe") or shutil.which("codex.cmd") or "codex.exe"
+    else:
+        codex = shutil.which("codex") or str(APP_CODEX)
     with tempfile.TemporaryDirectory(prefix="codex-memory-summary-") as directory:
         prompt = (
             "把下面这条已完成的 AI 回答总结成一条可搜索的记忆。只输出摘要正文，"
@@ -105,8 +125,33 @@ def github_repo_from_origin(url):
     return match[1].lower() if match else None
 
 
+@contextmanager
+def sync_lock(path):
+    with path.open("a+b") as lock:
+        if os.name != "nt":
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
+            return
+
+        lock.seek(0)
+        deadline = time.monotonic() + 45
+        while True:
+            try:
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError as error:
+                if error.errno != errno.EACCES or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.25)
+        try:
+            yield
+        finally:
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
+
 def save_turn(event, answer, server, sync_repo):
-    node = Path.home() / ".local/bin/node"
+    node = Path.home() / ".local/bin" / ("node.exe" if os.name == "nt" else "node")
     executable = str(node) if node.is_file() else shutil.which("node")
     if not executable or not server.is_file():
         return "自动记忆未保存：找不到现有 Local Memory MCP 或 Node.js。"
@@ -121,8 +166,7 @@ def save_turn(event, answer, server, sync_repo):
     answer = SECRET.sub("[已省略]", answer)[:16000]
     summary = summarize(answer)
     data_dir.mkdir(parents=True, exist_ok=True)
-    with (data_dir / "codex-autosync.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with sync_lock(data_dir / "codex-autosync.lock"):
         memory_call(executable, server, data_dir, env, "memory_save", {
             "title": f"Codex 回答 {key}", "content": summary, "category": "other",
             "tags": ["codex", "turn-summary"], "importance": 2,
@@ -166,15 +210,24 @@ def write_atomic(path, content):
                 new_path.unlink()
 
 
+def hook_command(python, hook, server, sync_repo, windows):
+    if windows:
+        # Start with an unquoted program token. The inner cmd /s strips just the
+        # outer quotes, preserving paths that contain spaces or Unicode text.
+        return (f'%SystemRoot%\\System32\\cmd.exe /d /s /c ""{python}" "{hook}" '
+                f'--server "{server}" --sync-repo {sync_repo}"')
+    return shlex.join([str(python), str(hook), "--server", str(server), "--sync-repo", sync_repo])
+
+
 def install(server, sync_repo):
     codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").resolve()
     config = codex_home / "hooks.json"
     settings = json.loads(config.read_text(encoding="utf-8-sig")) if config.exists() else {}
     stops = settings.setdefault("hooks", {}).setdefault("Stop", [])
     hook = codex_home / "hooks" / Path(__file__).name
-    command = shlex.join([sys.executable, str(hook), "--server", str(server),
-                          "--sync-repo", sync_repo])
-    definition = {"type": "command", "command": command, "timeout": 120,
+    windows = os.name == "nt"
+    command = hook_command(sys.executable, hook, server, sync_repo, windows)
+    definition = {"type": "command", "command": command, "timeout": 180 if windows else 120,
                   "statusMessage": "整理并同步本轮记忆"}
     existing = next((entry for group in stops for entry in group.get("hooks", [])
                      if entry.get("type") == "command"
@@ -210,14 +263,14 @@ def main():
             raise SystemExit(f"安装失败：{error}") from None
         return
     try:
-        event = json.load(sys.stdin)
+        event = json.load(sys.stdin.buffer)
         answer = event.get("last_assistant_message")
         message = None
         if event.get("hook_event_name") == "Stop" and isinstance(answer, str) and answer.strip():
             message = save_turn(event, answer.strip(), server, sync_repo)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         message = "本轮自动记忆未写入。"
-    print(json.dumps({"systemMessage": message} if message else {}, ensure_ascii=False))
+    print(json.dumps({"systemMessage": message} if message else {}))
 
 
 if __name__ == "__main__":
