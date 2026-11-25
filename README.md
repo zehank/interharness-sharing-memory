@@ -1,6 +1,15 @@
-# Antigravity Local Memory (`local-memory`)
+# Interharness Sharing Memory
 
-A zero-dependency, cross-platform (**Windows & macOS**) persistent memory plugin for **Google Antigravity**, inspired by layered & graph-based LLM-supervised memory designs (`dsh-mnemon`).
+Share a local-first memory store across AI harnesses. Each integration uses the same Local Memory MCP server and per-device snapshot format. Keep the plugin source in this repository and use a separate private repository or cloud folder for your memory data.
+
+| Harness | Integration | Platforms |
+| :--- | :--- | :--- |
+| Google Antigravity | [Native Local Memory plugin](#antigravity-installation) | macOS, Windows |
+| OpenAI Codex | [Stop hook for automatic reply summaries and GitHub sync](harnesses/codex/README.md) | macOS, Linux |
+
+The Antigravity manifest and MCP entry point live at the repository root, so existing installs can keep pulling updates. Additional harness-specific entry points can live under `harnesses/` and reuse `server/memory-mcp.mjs`.
+
+## Shared features
 
 - **Zero external npm dependencies**: Powered by Node.js built-in `node:sqlite` (Node.js ≥ 22.5 / 24).
 - **Local-First & Privacy-Preserving**: All memory data stays in `~/.gemini/memory/` (completely decoupled from this plugin directory).
@@ -14,25 +23,25 @@ A zero-dependency, cross-platform (**Windows & macOS**) persistent memory plugin
 
 ---
 
-## Requirements
+## Antigravity requirements
 
 - **Node.js ≥ 22.5** (Node.js 24 LTS recommended)
 - **Google Antigravity**
 
 ---
 
-## Installation
+## Antigravity installation
 
 ### macOS / Linux
 ```bash
 mkdir -p ~/.gemini/config/plugins
-git clone https://github.com/zehank/antigravity-local-memory.git ~/.gemini/config/plugins/local-memory
+git clone https://github.com/zehank/interharness-sharing-memory.git ~/.gemini/config/plugins/local-memory
 ```
 
 ### Windows (PowerShell)
 ```powershell
 New-Item -ItemType Directory -Force -Path "$HOME\.gemini\config\plugins" | Out-Null
-git clone https://github.com/zehank/antigravity-local-memory.git "$HOME\.gemini\config\plugins\local-memory"
+git clone https://github.com/zehank/interharness-sharing-memory.git "$HOME\.gemini\config\plugins\local-memory"
 ```
 
 Antigravity automatically discovers and loads the plugin on the next turn—no restart required.
