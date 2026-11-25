@@ -537,9 +537,144 @@ function runGitSync() {
   return { git_enabled: true, merge: mergeResult, git: log };
 }
 
+const AUTO_SYNC_ENABLED = !["false", "0", "off"].includes(
+  String(
+    process.env.MEMORY_AUTO_SYNC !== undefined
+      ? process.env.MEMORY_AUTO_SYNC
+      : userConfig.autoSync !== undefined
+        ? userConfig.autoSync
+        : "true"
+  )
+    .trim()
+    .toLowerCase()
+);
+const AUTO_SYNC_DEBOUNCE_MS = Math.max(
+  1000,
+  Number(
+    process.env.MEMORY_AUTO_SYNC_DEBOUNCE_MS ||
+      userConfig.autoSyncDebounceMs ||
+      30000
+  ) || 30000
+);
+
+let gitSyncInFlight = false;
+let autoSyncTimer = null;
+let autoSyncPendingAfterFlight = false;
+let lastAutoSyncState = null;
+
+function runAsyncSyncGit(args, cb, timeout = 20000) {
+  execFile(
+    "git",
+    args,
+    { cwd: SYNC_DIR, timeout, windowsHide: true },
+    (err, stdout, stderr) =>
+      cb(err, (stdout || "").trim(), (stderr || "").trim())
+  );
+}
+
+function runBackgroundGitSync({ pushChanges = true } = {}) {
+  if (!AUTO_SYNC_ENABLED || !isGitRepo(SYNC_DIR)) return;
+  if (gitSyncInFlight) {
+    if (pushChanges) autoSyncPendingAfterFlight = true;
+    return;
+  }
+
+  gitSyncInFlight = true;
+  const finish = (state) => {
+    gitSyncInFlight = false;
+    lastAutoSyncState = { ...state, at: nowIso() };
+    if (autoSyncPendingAfterFlight) {
+      autoSyncPendingAfterFlight = false;
+      scheduleBackgroundGitSync();
+    }
+  };
+
+  runAsyncSyncGit(["pull", "--rebase", "--autostash"], (pullErr, pullOut, pullStderr) => {
+    let mergeResult = null;
+    try {
+      mergeResult = mergeAllDeviceSnapshots();
+      if (pushChanges) {
+        exportDeviceSnapshot();
+      }
+      syncMarkdown();
+    } catch (err) {
+      finish({ status: "error", phase: "merge", message: err.message });
+      return;
+    }
+
+    if (!pushChanges) {
+      finish({
+        status: pullErr ? "pull_warning" : "pulled",
+        pull: pullOut || undefined,
+        warning: pullErr ? pullStderr || pullErr.message : undefined,
+        merge: mergeResult,
+      });
+      return;
+    }
+
+    const addTargets = ["devices/", "MEMORY.md"];
+    if (fs.existsSync(path.join(SYNC_DIR, "documents"))) {
+      addTargets.push("documents/");
+    }
+
+    runAsyncSyncGit(["add", ...addTargets], (addErr, _addOut, addStderr) => {
+      if (addErr) {
+        finish({ status: "error", phase: "add", message: addStderr || addErr.message });
+        return;
+      }
+      runAsyncSyncGit(["status", "--porcelain"], (stErr, stOut, stStderr) => {
+        if (stErr) {
+          finish({ status: "error", phase: "status", message: stStderr || stErr.message });
+          return;
+        }
+        if (!stOut) {
+          finish({ status: "up_to_date", merge: mergeResult });
+          return;
+        }
+        runAsyncSyncGit(
+          ["commit", "-m", `sync(${DEVICE_ID}): ${nowIso()}`],
+          (commitErr, _commitOut, commitStderr) => {
+            if (commitErr) {
+              finish({
+                status: "error",
+                phase: "commit",
+                message: commitStderr || commitErr.message,
+              });
+              return;
+            }
+            runAsyncSyncGit(["push"], (pushErr, pushOut, pushStderr) => {
+              finish({
+                status: pushErr ? "push_warning" : "synced",
+                push: pushOut || undefined,
+                warning: pushErr ? pushStderr || pushErr.message : undefined,
+                merge: mergeResult,
+              });
+            });
+          }
+        );
+      });
+    });
+  });
+}
+
+function scheduleBackgroundGitSync() {
+  if (!AUTO_SYNC_ENABLED || !isGitRepo(SYNC_DIR)) return;
+  if (autoSyncTimer) {
+    clearTimeout(autoSyncTimer);
+  }
+  autoSyncTimer = setTimeout(() => {
+    autoSyncTimer = null;
+    runBackgroundGitSync({ pushChanges: true });
+  }, AUTO_SYNC_DEBOUNCE_MS);
+  if (typeof autoSyncTimer.unref === "function") {
+    autoSyncTimer.unref();
+  }
+}
+
 function persistAndMirror() {
   exportDeviceSnapshot();
   syncMarkdown();
+  scheduleBackgroundGitSync();
 }
 
 // Compute time decay multiplier (pinned memories do not decay; 30-day half-life with 0.35 floor)
@@ -844,10 +979,11 @@ function scheduleBackgroundAutoUpdate() {
   });
 }
 
-// Startup: migrate, merge any remote device snapshots, ensure MEMORY.md exists, check updates in background
+// Startup: migrate, merge local snapshots, pull remote snapshots & check updates in background
 migrateSchema();
 mergeAllDeviceSnapshots();
 syncMarkdown();
+runBackgroundGitSync({ pushChanges: false });
 scheduleBackgroundAutoUpdate();
 
 const TOOLS = [
@@ -1593,9 +1729,26 @@ function handleToolCall(name, args = {}) {
     }
 
     case "memory_sync": {
+      if (autoSyncTimer) {
+        clearTimeout(autoSyncTimer);
+        autoSyncTimer = null;
+      }
       let result;
       if (isGitRepo(SYNC_DIR)) {
-        result = runGitSync();
+        if (gitSyncInFlight) {
+          const merge = mergeAllDeviceSnapshots();
+          exportDeviceSnapshot();
+          syncMarkdown();
+          autoSyncPendingAfterFlight = true;
+          result = {
+            git_enabled: true,
+            in_flight: true,
+            note: "Background Git sync is currently running; local snapshots merged and follow-up sync queued.",
+            merge,
+          };
+        } else {
+          result = runGitSync();
+        }
       } else {
         const merge = mergeAllDeviceSnapshots();
         const snapshotFile = exportDeviceSnapshot();
@@ -1657,6 +1810,9 @@ function handleToolCall(name, args = {}) {
                 sync_mode: isGitRepo(SYNC_DIR) ? "git" : "folder",
                 sync_dir: SYNC_DIR,
                 synced_devices: deviceFiles.map((f) => f.replace(/\.json$/, "")),
+                auto_sync_enabled: AUTO_SYNC_ENABLED,
+                auto_sync_debounce_ms: AUTO_SYNC_DEBOUNCE_MS,
+                last_auto_sync: lastAutoSyncState,
                 auto_update_mode: AUTO_UPDATE_MODE,
                 update_state: readUpdateState(),
                 db_path: DB_PATH,
@@ -1739,5 +1895,19 @@ rl.on("line", (line) => {
       id,
       error: { code: -32603, message: err?.message || "Internal server error" },
     });
+  }
+});
+
+rl.on("close", () => {
+  if (autoSyncTimer) {
+    clearTimeout(autoSyncTimer);
+    autoSyncTimer = null;
+    if (AUTO_SYNC_ENABLED && isGitRepo(SYNC_DIR) && !gitSyncInFlight) {
+      try {
+        runGitSync();
+      } catch {
+        // best-effort flush on exit
+      }
+    }
   }
 });

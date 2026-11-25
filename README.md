@@ -83,10 +83,16 @@ Each machine only writes its own `devices/<device-id>.json`, avoiding cloud conf
 | `memory_update` | Check for or apply plugin updates from GitHub (`git pull --ff-only`) |
 | `memory_stats` | View counts, device ID, sync mode, update status, and file paths |
 
-### Auto-Update Configuration (Optional)
-By default, the plugin checks GitHub in the background every 12 hours and safely fast-forward updates itself when cloned via Git. You can customize this in `~/.gemini/memory/config.json`:
+### Auto-Sync & Auto-Update Configuration (Optional)
+By default:
+- **Background Git Auto-Sync** pulls on startup, debounces writes (30s) to commit & push automatically in the background (non-blocking), and flushes pending writes on exit.
+- **Safe Auto-Update** checks GitHub in the background every 12 hours and safely fast-forward updates itself when cloned via Git.
+
+You can customize these in `~/.gemini/memory/config.json`:
 ```json
 {
+  "autoSync": true,
+  "autoSyncDebounceMs": 30000,
   "autoUpdate": "apply",
   "autoUpdateIntervalHours": 12
 }
