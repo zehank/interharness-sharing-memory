@@ -4,9 +4,17 @@ The Codex `Stop` hook summarizes each finished text reply, saves the summary thr
 
 ## Setup
 
-Use local Codex on macOS or Linux with Python 3.9+, Git, and Node.js 22.5+ (24 LTS recommended). Follow the [shared Git setup](../../README.md#cross-device-sync-setup-windows--macos) to clone your **private memory repository** into `~/.gemini/memory/sync`, with a checked-out branch tracking `origin`. Configure Git authentication before enabling the hook.
+Use local Codex on Windows, macOS, or Linux with Python 3.9+, Git, and Node.js 22.5+ (24 LTS recommended). Follow the [shared Git setup](../../README.md#cross-device-sync-setup-windows--macos) to clone your **private memory repository** into `~/.gemini/memory/sync`, with a checked-out branch tracking `origin`. Configure Git authentication before enabling the hook.
 
-From this plugin checkout, replace `OWNER/PRIVATE_MEMORY_REPO` with the owner and name of your private data repository, and run:
+From this plugin checkout, replace `OWNER/PRIVATE_MEMORY_REPO` with the owner and name of your private data repository.
+
+**Windows (PowerShell)**
+
+```powershell
+py -3 .\harnesses\codex\local-memory-autosync.py --install --sync-repo OWNER/PRIVATE_MEMORY_REPO
+```
+
+**macOS / Linux**
 
 ```bash
 python3 harnesses/codex/local-memory-autosync.py --install --sync-repo OWNER/PRIVATE_MEMORY_REPO
@@ -14,4 +22,4 @@ python3 harnesses/codex/local-memory-autosync.py --install --sync-repo OWNER/PRI
 
 The installer uses the MCP server in this checkout. To share an existing Antigravity installation, also pass `--server ~/.gemini/config/plugins/local-memory/server/memory-mcp.mjs`. The hook uses the same data directory and device ID as that server. Keep the checkout at its installed location or rerun the installer after moving it.
 
-Restart local Codex, open `/hooks`, and review and trust the new `Stop` hook. Send a short test prompt and check the private repository's `devices/` directory for a memory tagged `codex` and `turn-summary`. The installed hook checks that both fetch and push use the repository specified at install time.
+Restart local Codex and review and trust the new `Stop` hook from `/hooks` in the CLI or **Settings > Hooks** in the desktop app. Send a short test prompt and check the private repository's `devices/` directory for a memory tagged `codex` and `turn-summary`. The installed hook checks that both fetch and push use the repository specified at install time.
