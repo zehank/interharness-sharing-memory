@@ -1,11 +1,11 @@
 # Interharness Sharing Memory
 
-Share a local-first memory store across AI harnesses. Each integration uses the same Local Memory MCP server and per-device snapshot format. Keep the plugin source in this repository and use a separate private repository or cloud folder for your memory data.
+Share persistent, local-first memory across Antigravity, Codex, and DeepSeek Harness on Windows and macOS, with Codex support on Linux as well. Each integration uses the same Local Memory MCP server and per-device snapshot format. Keep the plugin source in this repository and use a separate private repository or cloud folder for your memory data.
 
 | Harness | Integration | Platforms |
 | :--- | :--- | :--- |
 | Google Antigravity | [Native Local Memory plugin](#antigravity-installation) | macOS, Windows |
-| OpenAI Codex | [Stop hook for automatic reply summaries and GitHub sync](harnesses/codex/README.md) | macOS, Linux |
+| OpenAI Codex | [Stop hook for automatic reply summaries and GitHub sync](harnesses/codex/README.md) | Windows, macOS, Linux |
 | DeepSeek Harness | [dsh-mnemon bridge with idempotent UID-safe sync](harnesses/dsh/README.md) | macOS, Windows |
 
 The Antigravity manifest and MCP entry point live at the repository root, so existing installs can keep pulling updates. Additional harness-specific entry points can live under `harnesses/` and reuse `server/memory-mcp.mjs`.
