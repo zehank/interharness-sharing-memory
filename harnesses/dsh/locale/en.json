@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Sharing memory sync",
+    "description": "Bidirectional, idempotent sync between dsh-mnemon and the unified local-memory store in zehank/sharing-memory, preserving the existing mnemon UID mapping.",
+    "detail": "docs/DETAIL.md"
+  }
+}

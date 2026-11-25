@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "总记忆库双向同步",
+    "description": "在 dsh-mnemon（持久层 + 热记忆）与 zehank/sharing-memory 统一总记忆库之间双向、幂等同步，沿用原有 mnemon UID 映射，不产生重复条目。",
+    "detail": "docs/DETAIL.md"
+  }
+}

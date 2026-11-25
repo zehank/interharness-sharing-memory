@@ -1,0 +1,11 @@
+- insert:
+    - id: sharing-memory-sync
+      name: '@local/sharing-memory-sync'
+      config:
+        # 'auto' finds the user's Node (>= 22.5, needed for node:sqlite) on macOS and Windows.
+        nodePath: 'auto'
+        # off | startup | idle | both. Auto runs are debounced and never block a turn.
+        autoSync: 'off'
+        autoSyncMinIntervalMs: 1800000
+        # Mirror other AIs' pinned / importance >= 4 records into DSH hot memory on pull.
+        mirrorPinned: false

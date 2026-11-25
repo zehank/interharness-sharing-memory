@@ -6,6 +6,7 @@ Share a local-first memory store across AI harnesses. Each integration uses the 
 | :--- | :--- | :--- |
 | Google Antigravity | [Native Local Memory plugin](#antigravity-installation) | macOS, Windows |
 | OpenAI Codex | [Stop hook for automatic reply summaries and GitHub sync](harnesses/codex/README.md) | macOS, Linux |
+| DeepSeek Harness | [dsh-mnemon bridge with idempotent UID-safe sync](harnesses/dsh/README.md) | macOS, Windows |
 
 The Antigravity manifest and MCP entry point live at the repository root, so existing installs can keep pulling updates. Additional harness-specific entry points can live under `harnesses/` and reuse `server/memory-mcp.mjs`.
 
@@ -45,6 +46,18 @@ git clone https://github.com/zehank/interharness-sharing-memory.git "$HOME\.gemi
 ```
 
 Antigravity automatically discovers and loads the plugin on the next turn—no restart required.
+
+---
+
+## DeepSeek Harness installation
+
+Requires DeepSeek Harness with the [dsh-mnemon](https://github.com/omdsh-dev/dsh-mnemon) plugin, Node.js ≥ 22.5, and the same Local Memory data directory described above. The bridge lives in [`harnesses/dsh`](harnesses/dsh/README.md). It keeps dsh-mnemon's hot runtime layer and persistent store untouched, reuses the original `mnemon_*` UID mapping, and sends every write through this repository's Local Memory MCP server (`memory_sync`), so Git still only sees `devices/*.json` and `MEMORY.md`.
+
+```bash
+dsh plugin --profile desktop add github:zehank/interharness-sharing-memory#path:harnesses/dsh
+```
+
+If your pnpm does not support `#path:` subdirectory installs, clone this repository and add `harnesses/dsh` as a local plugin path. Restart DeepSeek Harness after installation; the agent then exposes `sharing_memory_sync` and `sharing_memory_status`. Set `autoSync: 'idle'` (or `startup` / `both`) in the plugin row to upload memory after dsh-mnemon's idle review, or call `sharing_memory_sync` manually.
 
 ---
 

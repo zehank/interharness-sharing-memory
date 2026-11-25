@@ -1,0 +1,44 @@
+{
+  "name": "@local/sharing-memory-sync",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Bidirectional, UID-stable sync between dsh-mnemon and the Antigravity local-memory unified store (zehank/sharing-memory).",
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "dsh",
+    "memory",
+    "mnemon",
+    "antigravity",
+    "local-memory"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zehank/interharness-sharing-memory.git",
+    "directory": "harnesses/dsh"
+  },
+  "homepage": "https://github.com/zehank/interharness-sharing-memory/tree/main/harnesses/dsh",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "scripts",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
